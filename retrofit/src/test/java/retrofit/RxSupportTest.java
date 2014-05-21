@@ -1,5 +1,12 @@
 package retrofit;
 
+import android.os.SystemClock;
+
+import org.junit.Before;
+import org.junit.Test;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+
 import java.util.ArrayDeque;
 import java.util.Collections;
 import java.util.Deque;
@@ -7,15 +14,16 @@ import java.util.Iterator;
 import java.util.concurrent.Callable;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
-import org.junit.Before;
-import org.junit.Test;
-import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+
 import retrofit.client.Header;
 import retrofit.client.Response;
 import retrofit.mime.TypedInput;
+import rx.Observable;
 import rx.Observer;
+import rx.Subscriber;
 import rx.Subscription;
+import rx.functions.Action1;
+import rx.observables.BlockingObservable;
 import rx.schedulers.Schedulers;
 import rx.schedulers.TestScheduler;
 
@@ -39,7 +47,8 @@ public class RxSupportTest {
   private QueuedSynchronousExecutor executor;
   private RxSupport rxSupport;
 
-  @Mock Observer<Object> subscriber;
+  @Mock
+  Observer<Object> subscriber;
 
   @Before public void setUp() {
     MockitoAnnotations.initMocks(this);
@@ -138,6 +147,30 @@ public class RxSupportTest {
     // Forward the Observable Scheduler
     observe.triggerActions();
     verify(subscriber, times(1)).onNext(response);
+  }
+
+  @Test public void testObservableRespectsBlockingOnNext() throws Exception {
+
+    final BlockingObservable<Object> blockingObservable = BlockingObservable.from(Observable.create(new Observable.OnSubscribe<Object>() {
+      @Override public void call(Subscriber<? super Object> subscriber) {
+        SystemClock.sleep(50);
+        subscriber.onNext(null);
+        subscriber.onCompleted();
+      }
+    }));
+
+    rxSupport.createRequestObservable(callable)
+            .doOnNext(new Action1() {
+              @Override public void call(Object o) {
+                blockingObservable.single();
+              }
+            })
+            .subscribe(subscriber);
+
+    executor.executeNextInQueue();
+    verify(subscriber, times(1)).onNext(any());
+    verify(subscriber, times(1)).onCompleted();
+
   }
 
   /**
